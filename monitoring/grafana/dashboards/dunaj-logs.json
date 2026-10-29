@@ -1,0 +1,50 @@
+{
+  "uid": "dt-logs",
+  "title": "Dunaj Express - logy",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Uzol",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": { "label": "node", "refId": "nodes", "stream": "", "type": 1 },
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+",
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "logs",
+      "title": "Backend - synchronizacia (SYNC / PEER / OUTBOX)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"backend\", node=~\"$node\"} |~ \"SYNC|PEER|OUTBOX\""
+        }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Vsetky logy (backend, frontend, db)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "{node=~\"$node\"}" }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    }
+  ]
+}

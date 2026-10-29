@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: dunaj-express
+    type: file
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana/dashboards

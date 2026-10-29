@@ -1,0 +1,135 @@
+# Uzol C - Centrala + Loki/Grafana (VM 3)
+# Spustenie (v tejto zlozke):
+#   cp .env.example .env   # uprav IP, SYNC_TOKEN, hesla
+#   docker compose up -d --build
+#
+# Tato zlozka je samostatna (backend/, frontend/, monitoring/, scripts/) - na VM staci skopirovat/naklonovat len ju.
+# Rola uzla je dana tymto suborom, citlive udaje a IP adresy su v .env.
+#
+# Siete (kvoli simulacii odpojenia uzla od siete):
+#   db_net    - len db <-> backend (internal)
+#   local_net - len frontend <-> backend (internal)
+#   lan_net   - siet: published porty, spojenie s inymi uzlami a Loki
+# scripts/isolate-node.sh odpoji backend od lan_net: lokalny frontend a databaza ostanu funkcne.
+
+name: dt-node
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dt
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?nastav POSTGRES_PASSWORD v .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data     # data prezijú restart/zmazanie kontajnera
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [db_net]
+    labels:
+      logging: "alloy"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ID: C
+      NODE_ROLE: OFFICE
+      PEERS: ${PEERS:?nastav PEERS v .env}
+      SYNC_TOKEN: ${SYNC_TOKEN:?nastav SYNC_TOKEN v .env}
+      DB_URL: jdbc:postgresql://db:5432/dt
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "8080:8080"        # sem posielaju zmeny ostatne uzly (PEERS=http://<ip-vm>:8080)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+    networks: [db_net, local_net, lan_net]
+    labels:
+      logging: "alloy"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    networks: [local_net, lan_net]
+    labels:
+      logging: "alloy"
+
+  # posiela logy vsetkych kontajnerov tohto uzla do centralneho Loki (bezi na uzle C)
+  log-agent:
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      NODE_ID: C
+      LOKI_URL: ${LOKI_URL:?nastav LOKI_URL v .env}
+    volumes:
+      - ./monitoring/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloydata:/var/lib/alloy/data
+    networks: [lan_net]
+
+  # --- centralizovane logovanie (len uzol C) ---
+  loki:
+    image: grafana/loki:3.5.0
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/loki.yml:ro
+      - lokidata:/loki
+    ports:
+      - "3100:3100"
+    networks: [lan_net]
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    restart: unless-stopped
+    depends_on: [loki]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?nastav GRAFANA_PASSWORD v .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks: [lan_net]
+
+networks:
+  db_net:
+    internal: true
+  local_net:
+    internal: true
+  lan_net: {}
+
+volumes:
+  pgdata:
+  alloydata:
+  lokidata:
+  grafanadata:
